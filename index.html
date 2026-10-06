@@ -2,7 +2,11 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="theme-color" content="#242424">
 		<title>ToonQuest</title>
 		<style>
 html, body, #canvas {
@@ -50,6 +54,8 @@ body {
 	max-height: 100%;
 	max-width: 100%;
 	margin: auto;
+	image-rendering: pixelated;
+	image-rendering: crisp-edges;
 }
 
 #status-splash.show-image--false {
@@ -66,7 +72,7 @@ body {
 	image-rendering: pixelated;
 }
 
-#status-progress, #status-notice {
+#status-progress, #status-notice, #start-panel {
 	display: none;
 }
 
@@ -89,6 +95,44 @@ body {
 	text-align: center;
 	z-index: 1;
 }
+
+#start-panel {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: max(12%, env(safe-area-inset-bottom));
+	z-index: 2;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0 1.5rem;
+	box-sizing: border-box;
+}
+
+#start-btn {
+	appearance: none;
+	-webkit-appearance: none;
+	border: 1px solid #9b3943;
+	background: #5b3943;
+	color: #fff;
+	font: 600 1.05rem/1.2 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	border-radius: 999px;
+	padding: 0.9rem 1.6rem;
+	min-width: 12rem;
+	min-height: 2.75rem;
+}
+
+#start-btn:active {
+	background: #9b3943;
+}
+
+#start-size {
+	margin: 0;
+	color: #e0e0e0;
+	font: 0.9rem/1.35 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	text-align: center;
+	max-width: 22rem;
+}
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
@@ -104,14 +148,18 @@ body {
 		</noscript>
 
 		<div id="status">
-			<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="index.png" alt="">
+			<img id="status-splash" class="show-image--true fullsize--true use-filter--false" src="index.png" alt="">
 			<progress id="status-progress"></progress>
 			<div id="status-notice"></div>
+			<div id="start-panel">
+				<button id="start-btn" type="button">Tap to play</button>
+				<p id="start-size">First load is about 50 MB (wasm + pack). Wi-Fi recommended.</p>
+			</div>
 		</div>
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":13162900,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":13162900,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -119,9 +167,12 @@ const engine = new Engine(GODOT_CONFIG);
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
+	const startPanel = document.getElementById('start-panel');
+	const startBtn = document.getElementById('start-btn');
 
 	let initializing = true;
 	let statusMode = '';
+	let started = false;
 
 	function setStatusMode(mode) {
 		if (statusMode === mode || !initializing) {
@@ -135,6 +186,7 @@ const engine = new Engine(GODOT_CONFIG);
 		statusOverlay.style.visibility = 'visible';
 		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
 		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		startPanel.style.display = mode === 'start' ? 'flex' : 'none';
 		statusMode = mode;
 	}
 
@@ -161,6 +213,46 @@ const engine = new Engine(GODOT_CONFIG);
 		setStatusMode('notice');
 		initializing = false;
 	}
+
+	function resumeAudio() {
+		const Ctx = window.AudioContext || window.webkitAudioContext;
+		if (!Ctx) {
+			return;
+		}
+		const contexts = [];
+		if (typeof GodotAudio !== 'undefined' && GodotAudio.ctx) {
+			contexts.push(GodotAudio.ctx);
+		}
+		contexts.forEach((ctx) => {
+			if (ctx && ctx.state === 'suspended') {
+				ctx.resume();
+			}
+		});
+	}
+
+	function beginGame() {
+		if (started) {
+			return;
+		}
+		started = true;
+		resumeAudio();
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+
+	document.addEventListener('pointerdown', resumeAudio, { capture: true, passive: true });
 
 	const missing = Engine.getMissingFeatures({
 		threads: GODOT_THREADS_ENABLED,
@@ -198,23 +290,16 @@ const engine = new Engine(GODOT_CONFIG);
 			displayFailureNotice(missingMsg + missing.join('\n'));
 		}
 	} else {
-		setStatusMode('progress');
-		engine.startGame({
-			'onProgress': function (current, total) {
-				if (current > 0 && total > 0) {
-					statusProgress.value = current;
-					statusProgress.max = total;
-				} else {
-					statusProgress.removeAttribute('value');
-					statusProgress.removeAttribute('max');
-				}
-			},
-		}).then(() => {
-			setStatusMode('hidden');
-		}, displayFailureNotice);
+		setStatusMode('start');
+		startBtn.addEventListener('pointerup', beginGame);
+		startBtn.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' || event.key === ' ') {
+				event.preventDefault();
+				beginGame();
+			}
+		});
 	}
 }());
 		</script>
 	</body>
 </html>
-
